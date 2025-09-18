@@ -44,6 +44,7 @@ namespace ColorCycler
 
                     if (NetworkManager.IsClient)
                     {
+                        ColorCyclerBep.Logger.LogDebug($"Sending {nameof(ThingColorMessage)} to Server. ColorIndex = {current}, ThingId = {sprayCan.ReferenceId}");
                         NetworkClient.SendToServer(new ThingColorMessage
                         {
                             ThingId = sprayCan.ReferenceId,
@@ -59,12 +60,45 @@ namespace ColorCycler
     public class SprayCanOnUseItemPatch
     {
         [UsedImplicitly]
-        public static bool Prefix(ref bool __result)
+        public static bool Prefix(SprayCan __instance, ref bool __result, ref float quantity)
         {
-            // Modify __result and return false, so that pollution does not occur.
             __result = true;
+
+            // Make Paint infinite.
+            if (ColorCyclerBep.Settings.InfinitePaint)
+            {
+                ColorCyclerBep.Logger.LogDebug($"Setting Quantity to 0 from {quantity}");
+                quantity = 0.0f;
+            }
+            ColorCyclerBep.Logger.LogDebug($"Using Quantity {quantity}");
+
+            // Return true, so that original code is executed, if pollution should occur.
+            if (ColorCyclerBep.Settings.ShouldCreatePollution)
+            {
+                return true;
+            }
+
+            // No pollution, skip original, but apply Quantity in case of non-infinite paint
+            __instance.Quantity -= quantity;
             return false;
         }
+    }
+
+    // We have to patch Consumable because SprayCan does not implement the method
+    [HarmonyPatch(typeof(Consumable), nameof(Consumable.GetQuantityText))]
+    public class ConsumableGetQuantityTextPatch
+    {
+        [UsedImplicitly]
+        public static bool Prefix(Consumable __instance, ref string __result)
+        {
+            if (__instance is not SprayCan sprayCan || !ColorCyclerBep.Settings.InfinitePaint)
+            {
+                return true;
+            }
+            __result = "Infinite";
+            return false;
+        }
+
     }
 
     // We have to patch Consumable because SprayCan does not implement the method
@@ -76,7 +110,7 @@ namespace ColorCycler
         {
             if (__instance is SprayCan sprayCan)
             {
-                if (Thing.IsNetworkUpdateRequired(4096U, networkUpdateType))
+                if (Thing.IsNetworkUpdateRequired(ColorCyclerModHelpers.PaintableMaterialNetworkFlag, networkUpdateType))
                 {
                     writer.WriteInt32(ColorCyclerModHelpers.GetPaintColorIndex(sprayCan.PaintMaterial));
                 }
@@ -93,7 +127,7 @@ namespace ColorCycler
         {
             if (__instance is SprayCan sprayCan)
             {
-                if (Thing.IsNetworkUpdateRequired(4096U, networkUpdateType))
+                if (Thing.IsNetworkUpdateRequired(ColorCyclerModHelpers.PaintableMaterialNetworkFlag, networkUpdateType))
                 {
                     int index = reader.ReadInt32();
                     var paintMaterial = ColorCyclerModHelpers.GetPaintColor(index);
@@ -109,6 +143,7 @@ namespace ColorCycler
         [UsedImplicitly]
         public static void Postfix(ThingColorMessage __instance, long hostId)
         {
+            ColorCyclerBep.Logger.LogDebug($"Received {nameof(ThingColorMessage)}. ColorIndex = {__instance.ColorIndex}, ThingId = {__instance.ThingId}");
             if (Thing.Find(__instance.ThingId) is SprayCan sprayCan)
             {
                 var paintMaterial = ColorCyclerModHelpers.GetPaintColor(__instance.ColorIndex);
